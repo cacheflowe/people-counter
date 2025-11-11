@@ -30,8 +30,8 @@ def callback(frame: np.ndarray, model: YOLO, tracker: sv.ByteTrack,
 			trace_annotator: sv.TraceAnnotator) -> np.ndarray:
 	global seen_tracker_ids
 
-	# inference
-	results = model(frame)[0]
+	# inference with verbose=False to suppress output and half=True for FP16 on GPU
+	results = model(frame, verbose=False, half=(device == 'cuda'))[0]
 	detections = sv.Detections.from_ultralytics(results)
 
 	# Filter for person class only (class_id 0 in COCO dataset)
@@ -72,9 +72,14 @@ def main():
 	args = parse_args()
 	frame_width, frame_height = args.webcam_resolution
 
-	# Initialize model on specified device
+	# Initialize model on specified device with optimizations
 	model = YOLO(args.model).to(device)
-	tracker = sv.ByteTrack()
+	# Default is 30, reduce to 15-20 if needed
+	tracker = sv.ByteTrack(frame_rate=30)
+	
+	# Set smaller inference size for faster processing (default is 640)
+	# You can adjust this - smaller = faster but less accurate
+	model.overrides['imgsz'] = 416  # Try 320, 416, or 640
 	
 	# Use BoundingBoxAnnotator instead of BoxAnnotator for consistency
 	box_annotator = sv.BoxAnnotator(thickness=2)
