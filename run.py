@@ -4,6 +4,9 @@ from ultralytics import YOLO
 import cv2
 import argparse
 import torch
+from datetime import datetime
+import os
+import time
 
 # Check for CUDA device and set it
 
@@ -15,6 +18,42 @@ print(f'torch.cuda.get_device_name(0)): {torch.cuda.get_device_name(0) if torch.
 
 # Track unique people seen
 seen_tracker_ids = set()
+
+
+def get_daily_count_file():
+	"""Generate the filename for today's count file"""
+	today = datetime.now().strftime("%Y-%m-%d")
+	output_dir = "output"
+	os.makedirs(output_dir, exist_ok=True)
+	return os.path.join(output_dir, f"people_count_{today}.txt")
+
+
+def load_daily_count():
+	"""Load today's people count if it exists"""
+	filepath = get_daily_count_file()
+	
+	if os.path.exists(filepath):
+		try:
+			with open(filepath, 'r') as f:
+				count = int(f.read().strip())
+				print(f"Loaded count of {count} from {filepath}")
+				return count
+		except Exception as e:
+			print(f"Error loading daily count: {e}")
+			return 0
+	return 0
+
+
+def save_daily_count():
+	"""Save the current people count to today's file"""
+	filepath = get_daily_count_file()
+	
+	try:
+		with open(filepath, 'w') as f:
+			f.write(str(len(seen_tracker_ids)))
+		print(f"Saved count to {filepath}")
+	except Exception as e:
+		print(f"Error saving daily count: {e}")
 
 
 def parse_args():
@@ -72,6 +111,11 @@ def main():
 	args = parse_args()
 	frame_width, frame_height = args.webcam_resolution
 
+	# Load existing count for today
+	initial_count = load_daily_count()
+	if initial_count > 0:
+		print(f"Resuming today's count: {initial_count} people already seen")
+
 	# Initialize model on specified device with optimizations
 	model = YOLO(args.model).to(device)
 	# Default is 30, reduce to 15-20 if needed
@@ -94,6 +138,10 @@ def main():
 	print(f"Using camera {args.camera} at {frame_width}x{frame_height}")
 	print("Press 'q' or ESC to quit")
 
+	# Track last save time for periodic saving
+	last_save_time = time.time()
+	save_interval = 60  # Save every 60 seconds
+
 	while True:
 		ret, frame = cap.read()
 		if not ret:
@@ -104,6 +152,12 @@ def main():
 
 		cv2.imshow("Supervision People Counter", annotated_frame)
 
+		# Save count every minute
+		current_time = time.time()
+		if current_time - last_save_time >= save_interval:
+			save_daily_count()
+			last_save_time = current_time
+
 		# Allow both 'q' and ESC to quit
 		key = cv2.waitKey(1) & 0xFF
 		if key == ord('q') or key == 27:
@@ -112,7 +166,9 @@ def main():
 	cap.release()
 	cv2.destroyAllWindows()
 
-	print(f"\nTotal unique people seen: {len(seen_tracker_ids)}")
+	# Save the final count
+	save_daily_count()
+	print(f"\nTotal unique people seen today: {len(seen_tracker_ids)}")
 
 
 if __name__ == "__main__":
