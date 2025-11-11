@@ -18,6 +18,7 @@ print(f'torch.cuda.get_device_name(0)): {torch.cuda.get_device_name(0) if torch.
 
 # Track unique people seen
 seen_tracker_ids = set()
+total_count = 0  # Total count including previously loaded count
 
 
 def get_daily_count_file():
@@ -50,8 +51,8 @@ def save_daily_count():
 	
 	try:
 		with open(filepath, 'w') as f:
-			f.write(str(len(seen_tracker_ids)))
-		print(f"Saved count to {filepath}")
+			f.write(str(total_count))
+		# print(f"Saved count to {filepath}")
 	except Exception as e:
 		print(f"Error saving daily count: {e}")
 
@@ -61,26 +62,30 @@ def parse_args():
 	parser.add_argument("--webcam-resolution", nargs=2, type=int, default=[1280, 720], help="Webcam resolution")
 	parser.add_argument("--camera", type=int, default=0, help="Camera index")
 	parser.add_argument("--model", type=str, default="datasets/yolov8n.pt", help="Path to YOLO model")
+	parser.add_argument("--confidence", type=float, default=0.5, help="Minimum confidence threshold for person detection (0.0-1.0)")
 	return parser.parse_args()
 
 
 def callback(frame: np.ndarray, model: YOLO, tracker: sv.ByteTrack,
 			box_annotator: sv.BoxAnnotator, label_annotator: sv.LabelAnnotator,
-			trace_annotator: sv.TraceAnnotator) -> np.ndarray:
-	global seen_tracker_ids
+			trace_annotator: sv.TraceAnnotator, confidence_threshold: float = 0.5) -> np.ndarray:
+	global seen_tracker_ids, total_count
 
 	# inference with verbose=False to suppress output and half=True for FP16 on GPU
 	results = model(frame, verbose=False, half=(device == 'cuda'))[0]
 	detections = sv.Detections.from_ultralytics(results)
 
-	# Filter for person class only (class_id 0 in COCO dataset)
+	# Filter for person class only (class_id 0 in COCO dataset) then confidence threshold
 	detections = detections[detections.class_id == 0]
+	detections = detections[detections.confidence >= confidence_threshold]
 	detections = tracker.update_with_detections(detections)
 
 	# Track unique people
 	if detections.tracker_id is not None:
 		for tracker_id in detections.tracker_id:
-			seen_tracker_ids.add(tracker_id)
+			if tracker_id not in seen_tracker_ids:
+				seen_tracker_ids.add(tracker_id)
+				total_count += 1
 
 	# Prepare labels - id for unique people
 	labels = [
@@ -96,7 +101,7 @@ def callback(frame: np.ndarray, model: YOLO, tracker: sv.ByteTrack,
 	# Add total people count to frame
 	cv2.putText(
 		annotated_frame,
-		f"Total People Seen: {len(seen_tracker_ids)}",
+		f"Total People Seen: {total_count}",
 		(10, 30),
 		cv2.FONT_HERSHEY_SIMPLEX,
 		0.5,
@@ -108,13 +113,14 @@ def callback(frame: np.ndarray, model: YOLO, tracker: sv.ByteTrack,
 
 
 def main():
+	global total_count
 	args = parse_args()
 	frame_width, frame_height = args.webcam_resolution
 
 	# Load existing count for today
-	initial_count = load_daily_count()
-	if initial_count > 0:
-		print(f"Resuming today's count: {initial_count} people already seen")
+	total_count = load_daily_count()
+	if total_count > 0:
+		print(f"Resuming today's count: {total_count} people already seen")
 
 	# Initialize model on specified device with optimizations
 	model = YOLO(args.model).to(device)
@@ -136,6 +142,7 @@ def main():
 	cap.set(cv2.CAP_PROP_FRAME_HEIGHT, frame_height)
 
 	print(f"Using camera {args.camera} at {frame_width}x{frame_height}")
+	print(f"Confidence threshold: {args.confidence}")
 	print("Press 'q' or ESC to quit")
 
 	# Track last save time for periodic saving
@@ -148,7 +155,7 @@ def main():
 			print("Failed to grab frame")
 			break
 
-		annotated_frame = callback(frame, model, tracker, box_annotator, label_annotator, trace_annotator)
+		annotated_frame = callback(frame, model, tracker, box_annotator, label_annotator, trace_annotator, args.confidence)
 
 		cv2.imshow("Supervision People Counter", annotated_frame)
 
@@ -168,7 +175,7 @@ def main():
 
 	# Save the final count
 	save_daily_count()
-	print(f"\nTotal unique people seen today: {len(seen_tracker_ids)}")
+	print(f"\nTotal unique people seen today: {total_count}")
 
 
 if __name__ == "__main__":

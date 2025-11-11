@@ -18,7 +18,7 @@ pip install supervision[desktop] ultralytics
 ## Usage:
 
 ```powershell
-python run.py --webcam-resolution 1280 720 --camera 1
+python run.py --webcam-resolution 1280 720 --camera 1 --confidence 0.6
 ```
 
 ## Notes :
